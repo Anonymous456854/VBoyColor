@@ -39,6 +39,8 @@ int main()
 
     // Gamepads (an Xbox pad and the like) - GLFW's joystick API, no window:
     // what the Quest app gets from Android's input events.
+    // Keep GPA raw button numbering separate from its POV hat directions.
+    glfwInitHint(GLFW_JOYSTICK_HAT_BUTTONS, GLFW_FALSE);
     const bool gamepads = glfwInit() == GLFW_TRUE;
     if (!gamepads)
         std::fprintf(stderr, "VBoy Color VR: no gamepad support (glfwInit failed)\n");
