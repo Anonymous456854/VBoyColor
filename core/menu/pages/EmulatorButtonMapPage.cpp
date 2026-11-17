@@ -76,8 +76,31 @@ std::string BindingStr(const ButtonMapper::MappedButton &b, ButtonMappingProfile
     }
     if (b.InputDevice == ButtonMapper::DeviceGamepad)
     {
-        // A gamepad's buttons as printed on an Xbox pad.
         using namespace ButtonMapper;
+        // In GPA mode, this *is* the original Virtual Boy controller. Show
+        // its physical two D-pads and shoulders rather than Xbox names.
+        if (IsGpaAdapterActive())
+        {
+            switch (static_cast<uint32_t>(b.ButtonIndex))
+            {
+            case EmuButton_Up: return "Left D-pad Up";
+            case EmuButton_Down: return "Left D-pad Down";
+            case EmuButton_Left: return "Left D-pad Left";
+            case EmuButton_Right: return "Left D-pad Right";
+            case EmuButton_RightStickUp: return "Right D-pad Up";
+            case EmuButton_RightStickDown: return "Right D-pad Down";
+            case EmuButton_RightStickLeft: return "Right D-pad Left";
+            case EmuButton_RightStickRight: return "Right D-pad Right";
+            case EmuButton_A: return "VB A";
+            case EmuButton_B: return "VB B";
+            case EmuButton_LShoulder: return "VB L";
+            case EmuButton_RShoulder: return "VB R";
+            case EmuButton_Enter: return "VB Start";
+            case EmuButton_Back: return "VB Select";
+            default: break;
+            }
+        }
+        // Other controllers continue to use familiar Xbox-style labels.
         switch (static_cast<uint32_t>(b.ButtonIndex))
         {
         case EmuButton_Up: return "D-pad Up";
