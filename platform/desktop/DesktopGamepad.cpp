@@ -38,12 +38,30 @@ namespace
     using namespace ButtonMapper;
     constexpr float kDeadzone = 0.5f;
 
+    bool IsGpaControllerName(const char *rawName)
+    {
+        if (!rawName)
+            return false;
+        std::string name(rawName);
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
+                       { return static_cast<char>(std::tolower(c)); });
+        return name.find("gamer-pro advanced") != std::string::npos ||
+               name.find("gpa.") != std::string::npos ||
+               name.find("gamer-pro") != std::string::npos ||
+               name.find("bliss-box") != std::string::npos ||
+               name.find("4-play/gp port") != std::string::npos;
+    }
+
+
     void FromGlfw(DesktopGamepad &out)
     {
         for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
         {
+            // GPA adapters must use their physical Virtual Boy raw layout,
+            // even when GLFW thinks they match a standard gamepad.
             GLFWgamepadstate pad{};
-            if (!glfwJoystickIsGamepad(jid) || !glfwGetGamepadState(jid, &pad))
+            if (IsGpaControllerName(glfwGetJoystickName(jid)) ||
+                !glfwJoystickIsGamepad(jid) || !glfwGetGamepadState(jid, &pad))
                 continue;
             auto button = [&](int glfwButton, int emuButton)
             {
@@ -119,25 +137,19 @@ namespace
         // prevent the button-mapping screen from waiting for button release.
         static bool rightAxesChecked[GLFW_JOYSTICK_LAST + 1] = {};
         static bool hasCenteredRightAxes[GLFW_JOYSTICK_LAST + 1] = {};
+        bool gpaDetected = false;
 
         for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
         {
-            if (!glfwJoystickPresent(jid) || glfwJoystickIsGamepad(jid))
+            const bool isBlissBox = IsGpaControllerName(glfwGetJoystickName(jid));
+            if (!glfwJoystickPresent(jid) || (!isBlissBox && glfwJoystickIsGamepad(jid)))
             {
                 rightAxesChecked[jid] = false;
                 continue; // standard controllers are already handled by FromGlfw
             }
 
-            const char *rawName = glfwGetJoystickName(jid);
-            std::string name = rawName ? rawName : "";
-            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
-                           { return static_cast<char>(std::tolower(c)); });
-            // GPA units identify as "GPA.x"; older 4-Play/GP ports and
-            // versions with a descriptive Bliss-Box name are recognized too.
-            const bool isBlissBox = name.find("gpa.") != std::string::npos ||
-                                    name.find("gamer-pro") != std::string::npos ||
-                                    name.find("bliss-box") != std::string::npos ||
-                                    name.find("4-play/gp port") != std::string::npos;
+            if (isBlissBox)
+                gpaDetected = true;
 
             int buttonCount = 0;
             const unsigned char *buttons = glfwGetJoystickButtons(jid, &buttonCount);
@@ -183,10 +195,30 @@ namespace
                 if (axes[idx] > kDeadzone)
                     out.bits |= ButtonMapping[positive];
             };
-            // Standard GPA mapping uses a POV hat for the left D-pad and
-            // raw buttons for the right D-pad. Do not interpret its unrelated
-            // axis channels as extra held buttons while rebinding.
-            if (!isBlissBox || hatCount == 0)
+            // GPA's left D-pad can be exposed as either POV hat input or
+            // axes 0/1. Both must produce the physical left D-pad directions,
+            // never the emulated right D-pad or unrelated stick buttons.
+            if (isBlissBox)
+            {
+                // Only accept axes which were neutral at initial detection:
+                // trigger-like axes resting at -1 must not hold a direction
+                // forever or block the button binding capture screen.
+                static bool gpaAxisChecked[GLFW_JOYSTICK_LAST + 1] = {};
+                static bool gpaAxisCentered[GLFW_JOYSTICK_LAST + 1] = {};
+                if (!gpaAxisChecked[jid])
+                {
+                    gpaAxisChecked[jid] = true;
+                    gpaAxisCentered[jid] = axes && axisCount >= 2 &&
+                        axes[0] > -0.3f && axes[0] < 0.3f &&
+                        axes[1] > -0.3f && axes[1] < 0.3f;
+                }
+                if (gpaAxisCentered[jid])
+                {
+                    axis(0, EmuButton_Left, EmuButton_Right);
+                    axis(1, EmuButton_Up, EmuButton_Down);
+                }
+            }
+            else
             {
                 axis(0, EmuButton_LeftStickLeft, EmuButton_LeftStickRight);
                 axis(1, EmuButton_LeftStickUp, EmuButton_LeftStickDown);
@@ -204,6 +236,7 @@ namespace
                 axis(3, EmuButton_RightStickUp, EmuButton_RightStickDown);
             }
         }
+        SetGpaAdapterActive(gpaDetected);
     }
 
 #ifdef _WIN32
