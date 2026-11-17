@@ -124,7 +124,8 @@ namespace
         // See Bliss-Box GPA manual and PCGamingWiki's Virtual Boy mapping.
         // Indexes here are zero-based GLFW button indexes.
         constexpr int gpaVirtualBoyToEmu[] = {
-            EmuButton_A, EmuButton_B, EmuButton_RightStickLeft, EmuButton_RightStickDown,
+            // Gamer-Pro Advanced.2 reports physical B before physical A.
+            EmuButton_B, EmuButton_A, EmuButton_RightStickLeft, EmuButton_RightStickDown,
             EmuButton_Back, EmuButton_Enter, EmuButton_LShoulder, EmuButton_RShoulder,
             EmuButton_RightStickUp, EmuButton_RightStickRight
         };
