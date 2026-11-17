@@ -15,6 +15,10 @@
 #define GLFW_INCLUDE_NONE // (no OpenGL headers - only the joystick API)
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -96,8 +100,20 @@ namespace
             EmuButton_L2, EmuButton_R2,
             EmuButton_U1, EmuButton_U2, EmuButton_U3, EmuButton_U4
         };
+        // Bliss-Box Gamer-Pro Advanced's HID layout for a real Virtual Boy pad.
+        // Unlike an Xbox pad, Start/Select are HID buttons 6/5, L/R are 7/8,
+        // and the second D-pad is delivered as buttons 9/4/3/10.
+        // See Bliss-Box GPA manual and PCGamingWiki's Virtual Boy mapping.
+        // Indexes here are zero-based GLFW button indexes.
+        constexpr int gpaVirtualBoyToEmu[] = {
+            EmuButton_A, EmuButton_B, EmuButton_RightStickLeft, EmuButton_RightStickDown,
+            EmuButton_Back, EmuButton_Enter, EmuButton_LShoulder, EmuButton_RShoulder,
+            EmuButton_RightStickUp, EmuButton_RightStickRight
+        };
         constexpr int mappedButtonCount =
             static_cast<int>(sizeof(rawButtonToEmu) / sizeof(rawButtonToEmu[0]));
+        constexpr int gpaButtonCount =
+            static_cast<int>(sizeof(gpaVirtualBoyToEmu) / sizeof(gpaVirtualBoyToEmu[0]));
         // Many raw pads use axis 2/3 for triggers, resting at -1. Treating
         // those as a right stick would hold a direction forever and also
         // prevent the button-mapping screen from waiting for button release.
@@ -112,15 +128,34 @@ namespace
                 continue; // standard controllers are already handled by FromGlfw
             }
 
+            const char *rawName = glfwGetJoystickName(jid);
+            std::string name = rawName ? rawName : "";
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
+                           { return static_cast<char>(std::tolower(c)); });
+            // GPA units identify as "GPA.x"; older 4-Play/GP ports and
+            // versions with a descriptive Bliss-Box name are recognized too.
+            const bool isBlissBox = name.find("gpa.") != std::string::npos ||
+                                    name.find("gamer-pro") != std::string::npos ||
+                                    name.find("bliss-box") != std::string::npos ||
+                                    name.find("4-play/gp port") != std::string::npos;
+
             int buttonCount = 0;
             const unsigned char *buttons = glfwGetJoystickButtons(jid, &buttonCount);
             if (buttons)
             {
-                for (int i = 0; i < buttonCount && i < mappedButtonCount; ++i)
+                const int *mapping = isBlissBox ? gpaVirtualBoyToEmu : rawButtonToEmu;
+                const int count = isBlissBox ? gpaButtonCount : mappedButtonCount;
+                for (int i = 0; i < buttonCount && i < count; ++i)
                     if (buttons[i] == GLFW_PRESS)
-                        out.bits |= ButtonMapping[rawButtonToEmu[i]];
-                if (buttonCount > 7 && buttons[6] == GLFW_PRESS && buttons[7] == GLFW_PRESS)
-                    out.menu = true; // Back + Start
+                        out.bits |= ButtonMapping[mapping[i]];
+                // A real Virtual Boy has no Guide button: Select + Start.
+                if (isBlissBox)
+                {
+                    if (buttonCount > 5 && buttons[4] == GLFW_PRESS && buttons[5] == GLFW_PRESS)
+                        out.menu = true;
+                }
+                else if (buttonCount > 7 && buttons[6] == GLFW_PRESS && buttons[7] == GLFW_PRESS)
+                    out.menu = true;
             }
 
             int hatCount = 0;
@@ -148,16 +183,22 @@ namespace
                 if (axes[idx] > kDeadzone)
                     out.bits |= ButtonMapping[positive];
             };
-            axis(0, EmuButton_LeftStickLeft, EmuButton_LeftStickRight);
-            axis(1, EmuButton_LeftStickUp, EmuButton_LeftStickDown);
-            if (!rightAxesChecked[jid])
+            // Standard GPA mapping uses a POV hat for the left D-pad and
+            // raw buttons for the right D-pad. Do not interpret its unrelated
+            // axis channels as extra held buttons while rebinding.
+            if (!isBlissBox || hatCount == 0)
+            {
+                axis(0, EmuButton_LeftStickLeft, EmuButton_LeftStickRight);
+                axis(1, EmuButton_LeftStickUp, EmuButton_LeftStickDown);
+            }
+            if (!isBlissBox && !rightAxesChecked[jid])
             {
                 rightAxesChecked[jid] = true;
                 hasCenteredRightAxes[jid] = axes && axisCount >= 4 &&
                     axes[2] > -0.3f && axes[2] < 0.3f &&
                     axes[3] > -0.3f && axes[3] < 0.3f;
             }
-            if (hasCenteredRightAxes[jid])
+            if (!isBlissBox && hasCenteredRightAxes[jid])
             {
                 axis(2, EmuButton_RightStickLeft, EmuButton_RightStickRight);
                 axis(3, EmuButton_RightStickUp, EmuButton_RightStickDown);
