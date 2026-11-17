@@ -80,6 +80,91 @@ namespace
         }
     }
 
+
+    // Generic DirectInput / USB controllers may appear as GLFW joysticks
+    // without a standard gamepad mapping. The normal glfwGetGamepadState path
+    // above ignores them; read their raw buttons, hats and axes instead.
+    // Raw button numbering is device-specific, so this is a usable default,
+    // not a substitute for a per-device GLFW mapping.
+    void FromUnmappedGlfw(DesktopGamepad &out)
+    {
+        constexpr int rawButtonToEmu[] = {
+            EmuButton_A, EmuButton_B, EmuButton_X, EmuButton_Y,
+            EmuButton_LShoulder, EmuButton_RShoulder,
+            EmuButton_Back, EmuButton_Enter,
+            EmuButton_LThumb, EmuButton_RThumb,
+            EmuButton_L2, EmuButton_R2,
+            EmuButton_U1, EmuButton_U2, EmuButton_U3, EmuButton_U4
+        };
+        constexpr int mappedButtonCount =
+            static_cast<int>(sizeof(rawButtonToEmu) / sizeof(rawButtonToEmu[0]));
+        // Many raw pads use axis 2/3 for triggers, resting at -1. Treating
+        // those as a right stick would hold a direction forever and also
+        // prevent the button-mapping screen from waiting for button release.
+        static bool rightAxesChecked[GLFW_JOYSTICK_LAST + 1] = {};
+        static bool hasCenteredRightAxes[GLFW_JOYSTICK_LAST + 1] = {};
+
+        for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
+        {
+            if (!glfwJoystickPresent(jid) || glfwJoystickIsGamepad(jid))
+            {
+                rightAxesChecked[jid] = false;
+                continue; // standard controllers are already handled by FromGlfw
+            }
+
+            int buttonCount = 0;
+            const unsigned char *buttons = glfwGetJoystickButtons(jid, &buttonCount);
+            if (buttons)
+            {
+                for (int i = 0; i < buttonCount && i < mappedButtonCount; ++i)
+                    if (buttons[i] == GLFW_PRESS)
+                        out.bits |= ButtonMapping[rawButtonToEmu[i]];
+                if (buttonCount > 7 && buttons[6] == GLFW_PRESS && buttons[7] == GLFW_PRESS)
+                    out.menu = true; // Back + Start
+            }
+
+            int hatCount = 0;
+            const unsigned char *hats = glfwGetJoystickHats(jid, &hatCount);
+            for (int i = 0; hats && i < hatCount; ++i)
+            {
+                if (hats[i] & GLFW_HAT_UP)
+                    out.bits |= ButtonMapping[EmuButton_Up];
+                if (hats[i] & GLFW_HAT_DOWN)
+                    out.bits |= ButtonMapping[EmuButton_Down];
+                if (hats[i] & GLFW_HAT_LEFT)
+                    out.bits |= ButtonMapping[EmuButton_Left];
+                if (hats[i] & GLFW_HAT_RIGHT)
+                    out.bits |= ButtonMapping[EmuButton_Right];
+            }
+
+            int axisCount = 0;
+            const float *axes = glfwGetJoystickAxes(jid, &axisCount);
+            auto axis = [&](int idx, int negative, int positive)
+            {
+                if (!axes || idx >= axisCount)
+                    return;
+                if (axes[idx] < -kDeadzone)
+                    out.bits |= ButtonMapping[negative];
+                if (axes[idx] > kDeadzone)
+                    out.bits |= ButtonMapping[positive];
+            };
+            axis(0, EmuButton_LeftStickLeft, EmuButton_LeftStickRight);
+            axis(1, EmuButton_LeftStickUp, EmuButton_LeftStickDown);
+            if (!rightAxesChecked[jid])
+            {
+                rightAxesChecked[jid] = true;
+                hasCenteredRightAxes[jid] = axes && axisCount >= 4 &&
+                    axes[2] > -0.3f && axes[2] < 0.3f &&
+                    axes[3] > -0.3f && axes[3] < 0.3f;
+            }
+            if (hasCenteredRightAxes[jid])
+            {
+                axis(2, EmuButton_RightStickLeft, EmuButton_RightStickRight);
+                axis(3, EmuButton_RightStickUp, EmuButton_RightStickDown);
+            }
+        }
+    }
+
 #ifdef _WIN32
     // XInput, loaded when first needed (no import library to link; the DLL
     // Windows 8+ has first). Ordinal 100 is XInputGetStateEx - the same, plus
@@ -175,6 +260,7 @@ DesktopGamepad PollDesktopGamepads()
 {
     DesktopGamepad out;
     FromGlfw(out);
+    FromUnmappedGlfw(out);
 #ifdef _WIN32
     FromXInput(out);
 #endif
