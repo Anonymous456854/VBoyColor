@@ -454,6 +454,9 @@ int main(int argc, char **argv)
     const int windowWidth = static_cast<int>(Emulator::kPreviewWidth * Emulator::kScale);
     const int windowHeight = static_cast<int>(Emulator::kPreviewHeight * Emulator::kScale);
 
+    // GLFW otherwise appends POV hats to raw joystick button indexes.
+    // Keep GPA's real buttons stable and read hats separately.
+    glfwInitHint(GLFW_JOYSTICK_HAT_BUTTONS, GLFW_FALSE);
     if (!glfwInit())
     {
         DesktopPlatform::ShowFatalError("VBoy Color couldn't start: glfwInit failed.");
