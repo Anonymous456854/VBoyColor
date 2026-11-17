@@ -4,6 +4,14 @@
 
 namespace ButtonMapper
 {
+namespace
+{
+    bool g_gpaAdapterActive = false;
+}
+
+void SetGpaAdapterActive(bool active) { g_gpaAdapterActive = active; }
+bool IsGpaAdapterActive() { return g_gpaAdapterActive; }
+
 
 uint32_t TranslateToVBBitmask(const uint32_t buttonStates[3], const MappedButtons (&vbButtons)[16])
 {
