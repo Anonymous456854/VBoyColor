@@ -17,6 +17,11 @@ namespace ButtonMapper {
         MappedButton Buttons[2];
     };
 
+    // Desktop input tells the shared menu when a Bliss-Box GPA controller is
+    // attached, allowing physical Virtual Boy button names instead of Xbox names.
+    void SetGpaAdapterActive(bool active);
+    bool IsGpaAdapterActive();
+
     const int DeviceGamepad =       0;
     const int DeviceLeftTouch =     1;
     const int DeviceRightTouch =    2;

@@ -15,6 +15,10 @@
 #define GLFW_INCLUDE_NONE // (no OpenGL headers - only the joystick API)
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -34,12 +38,30 @@ namespace
     using namespace ButtonMapper;
     constexpr float kDeadzone = 0.5f;
 
+    bool IsGpaControllerName(const char *rawName)
+    {
+        if (!rawName)
+            return false;
+        std::string name(rawName);
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c)
+                       { return static_cast<char>(std::tolower(c)); });
+        return name.find("gamer-pro advanced") != std::string::npos ||
+               name.find("gpa.") != std::string::npos ||
+               name.find("gamer-pro") != std::string::npos ||
+               name.find("bliss-box") != std::string::npos ||
+               name.find("4-play/gp port") != std::string::npos;
+    }
+
+
     void FromGlfw(DesktopGamepad &out)
     {
         for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
         {
+            // GPA adapters must use their physical Virtual Boy raw layout,
+            // even when GLFW thinks they match a standard gamepad.
             GLFWgamepadstate pad{};
-            if (!glfwJoystickIsGamepad(jid) || !glfwGetGamepadState(jid, &pad))
+            if (IsGpaControllerName(glfwGetJoystickName(jid)) ||
+                !glfwJoystickIsGamepad(jid) || !glfwGetGamepadState(jid, &pad))
                 continue;
             auto button = [&](int glfwButton, int emuButton)
             {
@@ -78,6 +100,144 @@ namespace
                 (pad.buttons[GLFW_GAMEPAD_BUTTON_BACK] == GLFW_PRESS && pad.buttons[GLFW_GAMEPAD_BUTTON_START] == GLFW_PRESS))
                 out.menu = true;
         }
+    }
+
+
+    // Generic DirectInput / USB controllers may appear as GLFW joysticks
+    // without a standard gamepad mapping. The normal glfwGetGamepadState path
+    // above ignores them; read their raw buttons, hats and axes instead.
+    // Raw button numbering is device-specific, so this is a usable default,
+    // not a substitute for a per-device GLFW mapping.
+    void FromUnmappedGlfw(DesktopGamepad &out)
+    {
+        constexpr int rawButtonToEmu[] = {
+            EmuButton_A, EmuButton_B, EmuButton_X, EmuButton_Y,
+            EmuButton_LShoulder, EmuButton_RShoulder,
+            EmuButton_Back, EmuButton_Enter,
+            EmuButton_LThumb, EmuButton_RThumb,
+            EmuButton_L2, EmuButton_R2,
+            EmuButton_U1, EmuButton_U2, EmuButton_U3, EmuButton_U4
+        };
+        // Bliss-Box Gamer-Pro Advanced's HID layout for a real Virtual Boy pad.
+        // Unlike an Xbox pad, Start/Select are HID buttons 6/5, L/R are 7/8,
+        // and the second D-pad is delivered as buttons 9/4/3/10.
+        // See Bliss-Box GPA manual and PCGamingWiki's Virtual Boy mapping.
+        // Indexes here are zero-based GLFW button indexes.
+        constexpr int gpaVirtualBoyToEmu[] = {
+            // Gamer-Pro Advanced.2 reports physical B before physical A.
+            EmuButton_B, EmuButton_A, EmuButton_RightStickLeft, EmuButton_RightStickDown,
+            EmuButton_Back, EmuButton_Enter, EmuButton_LShoulder, EmuButton_RShoulder,
+            EmuButton_RightStickUp, EmuButton_RightStickRight
+        };
+        constexpr int mappedButtonCount =
+            static_cast<int>(sizeof(rawButtonToEmu) / sizeof(rawButtonToEmu[0]));
+        constexpr int gpaButtonCount =
+            static_cast<int>(sizeof(gpaVirtualBoyToEmu) / sizeof(gpaVirtualBoyToEmu[0]));
+        // Many raw pads use axis 2/3 for triggers, resting at -1. Treating
+        // those as a right stick would hold a direction forever and also
+        // prevent the button-mapping screen from waiting for button release.
+        static bool rightAxesChecked[GLFW_JOYSTICK_LAST + 1] = {};
+        static bool hasCenteredRightAxes[GLFW_JOYSTICK_LAST + 1] = {};
+        bool gpaDetected = false;
+
+        for (int jid = GLFW_JOYSTICK_1; jid <= GLFW_JOYSTICK_LAST; ++jid)
+        {
+            const bool isBlissBox = IsGpaControllerName(glfwGetJoystickName(jid));
+            if (!glfwJoystickPresent(jid) || (!isBlissBox && glfwJoystickIsGamepad(jid)))
+            {
+                rightAxesChecked[jid] = false;
+                continue; // standard controllers are already handled by FromGlfw
+            }
+
+            if (isBlissBox)
+                gpaDetected = true;
+
+            int buttonCount = 0;
+            const unsigned char *buttons = glfwGetJoystickButtons(jid, &buttonCount);
+            if (buttons)
+            {
+                const int *mapping = isBlissBox ? gpaVirtualBoyToEmu : rawButtonToEmu;
+                const int count = isBlissBox ? gpaButtonCount : mappedButtonCount;
+                for (int i = 0; i < buttonCount && i < count; ++i)
+                    if (buttons[i] == GLFW_PRESS)
+                        out.bits |= ButtonMapping[mapping[i]];
+                // A real Virtual Boy has no Guide button: Select + Start.
+                if (isBlissBox)
+                {
+                    if (buttonCount > 5 && buttons[4] == GLFW_PRESS && buttons[5] == GLFW_PRESS)
+                        out.menu = true;
+                }
+                else if (buttonCount > 7 && buttons[6] == GLFW_PRESS && buttons[7] == GLFW_PRESS)
+                    out.menu = true;
+            }
+
+            int hatCount = 0;
+            const unsigned char *hats = glfwGetJoystickHats(jid, &hatCount);
+            for (int i = 0; hats && i < hatCount; ++i)
+            {
+                if (hats[i] & GLFW_HAT_UP)
+                    out.bits |= ButtonMapping[EmuButton_Up];
+                if (hats[i] & GLFW_HAT_DOWN)
+                    out.bits |= ButtonMapping[EmuButton_Down];
+                if (hats[i] & GLFW_HAT_LEFT)
+                    out.bits |= ButtonMapping[EmuButton_Left];
+                if (hats[i] & GLFW_HAT_RIGHT)
+                    out.bits |= ButtonMapping[EmuButton_Right];
+            }
+
+            int axisCount = 0;
+            const float *axes = glfwGetJoystickAxes(jid, &axisCount);
+            auto axis = [&](int idx, int negative, int positive)
+            {
+                if (!axes || idx >= axisCount)
+                    return;
+                if (axes[idx] < -kDeadzone)
+                    out.bits |= ButtonMapping[negative];
+                if (axes[idx] > kDeadzone)
+                    out.bits |= ButtonMapping[positive];
+            };
+            // GPA's left D-pad can be exposed as either POV hat input or
+            // axes 0/1. Both must produce the physical left D-pad directions,
+            // never the emulated right D-pad or unrelated stick buttons.
+            if (isBlissBox)
+            {
+                // Only accept axes which were neutral at initial detection:
+                // trigger-like axes resting at -1 must not hold a direction
+                // forever or block the button binding capture screen.
+                static bool gpaAxisChecked[GLFW_JOYSTICK_LAST + 1] = {};
+                static bool gpaAxisCentered[GLFW_JOYSTICK_LAST + 1] = {};
+                if (!gpaAxisChecked[jid])
+                {
+                    gpaAxisChecked[jid] = true;
+                    gpaAxisCentered[jid] = axes && axisCount >= 2 &&
+                        axes[0] > -0.3f && axes[0] < 0.3f &&
+                        axes[1] > -0.3f && axes[1] < 0.3f;
+                }
+                if (gpaAxisCentered[jid])
+                {
+                    axis(0, EmuButton_Left, EmuButton_Right);
+                    axis(1, EmuButton_Up, EmuButton_Down);
+                }
+            }
+            else
+            {
+                axis(0, EmuButton_LeftStickLeft, EmuButton_LeftStickRight);
+                axis(1, EmuButton_LeftStickUp, EmuButton_LeftStickDown);
+            }
+            if (!isBlissBox && !rightAxesChecked[jid])
+            {
+                rightAxesChecked[jid] = true;
+                hasCenteredRightAxes[jid] = axes && axisCount >= 4 &&
+                    axes[2] > -0.3f && axes[2] < 0.3f &&
+                    axes[3] > -0.3f && axes[3] < 0.3f;
+            }
+            if (!isBlissBox && hasCenteredRightAxes[jid])
+            {
+                axis(2, EmuButton_RightStickLeft, EmuButton_RightStickRight);
+                axis(3, EmuButton_RightStickUp, EmuButton_RightStickDown);
+            }
+        }
+        SetGpaAdapterActive(gpaDetected);
     }
 
 #ifdef _WIN32
@@ -175,6 +335,7 @@ DesktopGamepad PollDesktopGamepads()
 {
     DesktopGamepad out;
     FromGlfw(out);
+    FromUnmappedGlfw(out);
 #ifdef _WIN32
     FromXInput(out);
 #endif
