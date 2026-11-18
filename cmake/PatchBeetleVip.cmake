@@ -295,3 +295,53 @@ const uint8_t *vbgo_vip_framebuffers(void) { return &FB[0][0][0]; } /* VirtualBo
 
     set(VBGO_PATCHED_VIP_SOURCE "${OUT_DIR}/vip.c" PARENT_SCOPE)
 endfunction()
+
+
+# --------------------------------------------------------------------------
+# Experimental per-ROM compatibility setting for Virtual WarZone.
+#
+# The pinned Beetle VB submodule hardcodes BOTH vb.instant_display_hack and
+# vb.allow_draw_skip to true in mednafen/settings.c. In combination they let
+# the VIP skip drawing to its own emulated framebuffers; this is a possible
+# source of flicker for homebrew with direct framebuffer operations.
+#
+# Generate a patched copy instead of changing the upstream git submodule.
+# It behaves byte-for-byte the same for every other game. Emulator::LoadRom
+# sets the flag before the core initializes each game.
+# --------------------------------------------------------------------------
+function(vbgo_generate_warzone_safe_settings VB_CORE_DIR OUT_DIR)
+    set(SETTINGS_SOURCE "${VB_CORE_DIR}/mednafen/settings.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SETTINGS_SOURCE}")
+    file(READ "${SETTINGS_SOURCE}" SETTINGS)
+    string(REPLACE "\r\n" "\n" SETTINGS "${SETTINGS}")
+
+    _vbgo_replace_once(SETTINGS
+        [=[bool MDFN_GetSettingB(const char *name)
+{]=]
+        [=[static bool g_vbgo_warzone_safe_video = false;
+
+/* Called by the frontend before loading each ROM. Other games keep the
+ * original Beetle VB behavior exactly. */
+void vbgo_set_warzone_safe_video(bool enabled)
+{
+   g_vbgo_warzone_safe_video = enabled;
+}
+
+bool MDFN_GetSettingB(const char *name)
+{]=]
+        "mednafen/settings.c (per-ROM compatibility switch)")
+
+    _vbgo_replace_once(SETTINGS
+        [=[   if (!strcmp("vb.instant_display_hack", name))
+      return 1;
+   if (!strcmp("vb.allow_draw_skip", name))
+      return 1;]=]
+        [=[   if (!strcmp("vb.instant_display_hack", name))
+      return !g_vbgo_warzone_safe_video;
+   if (!strcmp("vb.allow_draw_skip", name))
+      return !g_vbgo_warzone_safe_video;]=]
+        "mednafen/settings.c (disable VIP shortcuts only for WarZone)")
+
+    _vbgo_write_if_changed("${OUT_DIR}/settings.c" "${SETTINGS}")
+    set(VBGO_PATCHED_SETTINGS_SOURCE "${OUT_DIR}/settings.c" PARENT_SCOPE)
+endfunction()
