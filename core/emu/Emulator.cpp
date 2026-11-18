@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -65,7 +66,34 @@ namespace
     // the core's defaults (said explicitly: it keeps the last values it was
     // told otherwise).
     std::atomic<bool> g_movieCore{false};
+    // Experimental game-specific compatibility setting. All other games
+    // keep their existing fast V810 CPU core, and controller mappings are
+    // unaffected. This is intentionally separate from TAS movie settings.
+    std::atomic<bool> g_warzoneAccurateCpu{false};
     std::atomic<bool> g_audioMuted{false};
+
+    bool IsVirtualWarzoneName(const std::string &name)
+    {
+        std::string normalized;
+        normalized.reserve(name.size());
+        for (unsigned char ch : name)
+            if (std::isalnum(ch))
+                normalized += static_cast<char>(std::tolower(ch));
+
+        // Match the 2023 Virtual WarZone homebrew (including filename revision
+        // suffixes), not the distinct "Ground Zero" follow-up.
+        if (normalized.find("groundzero") != std::string::npos)
+            return false;
+        return normalized.rfind("virtualwarzone", 0) == 0 ||
+               normalized.rfind("warzone", 0) == 0;
+    }
+
+    bool IsVirtualWarzoneRom(const std::string &path, const std::string &title)
+    {
+        const size_t separator = path.find_last_of("/\\#");
+        const std::string filename = path.substr(separator == std::string::npos ? 0 : separator + 1);
+        return IsVirtualWarzoneName(title) || IsVirtualWarzoneName(filename);
+    }
 
     // Set by Emulator::Initialize to &m_audioOutput - same "necessarily global"
     // reasoning as the rest of this block; RetroAudioSampleBatch forwards the
@@ -151,7 +179,7 @@ namespace
             }
             if (std::strcmp(var->key, "vb_cpu_emulation") == 0)
             {
-                var->value = g_movieCore.load() ? "accurate" : "fast";
+                var->value = (g_movieCore.load() || g_warzoneAccurateCpu.load()) ? "accurate" : "fast";
                 return true;
             }
             if (std::strcmp(var->key, "vb_opposite_directions") == 0)
@@ -373,6 +401,11 @@ bool Emulator::LoadRom(const std::string &romPath, const std::string &displayNam
     StopMovie();
     m_movieSession = movie != nullptr;
     g_movieCore = m_movieSession;
+    // This flag is set before retro_load_game: Beetle VB reads its CPU mode
+    // during core initialization for each loaded game, not only at startup.
+    g_warzoneAccurateCpu = IsVirtualWarzoneRom(romPath, displayName);
+    if (g_warzoneAccurateCpu)
+        LogLine("[Emulator] Virtual WarZone compatibility experiment: accurate CPU enabled");
     if (movie)
     {
         m_movie = *movie;
