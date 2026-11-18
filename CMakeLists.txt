@@ -216,6 +216,8 @@ set(VB_CORE_DIR ${CMAKE_SOURCE_DIR}/third_party/beetle-vb-libretro)
 # untouched submodule.
 include(${CMAKE_SOURCE_DIR}/cmake/PatchBeetleVip.cmake)
 vbgo_generate_patched_vip(${VB_CORE_DIR} ${CMAKE_BINARY_DIR}/generated/beetle-vb)
+# Use a generated settings.c to allow a per-ROM VIP compatibility mode.
+vbgo_generate_warzone_safe_settings(${VB_CORE_DIR} ${CMAKE_BINARY_DIR}/generated/beetle-vb)
 
 add_library(vb_core STATIC
     ${VB_CORE_DIR}/mednafen/hw_cpu/v810/v810_cpu.cpp
@@ -228,7 +230,7 @@ add_library(vb_core STATIC
     ${VB_CORE_DIR}/mednafen/hw_cpu/v810/fpu-new/softfloat.c
     ${VB_CORE_DIR}/mednafen/sound/Blip_Buffer.c
     ${VB_CORE_DIR}/mednafen/state.c
-    ${VB_CORE_DIR}/mednafen/settings.c
+    ${VBGO_PATCHED_SETTINGS_SOURCE}
     ${VB_CORE_DIR}/libretro-common/compat/compat_strl.c
     ${VB_CORE_DIR}/libretro-common/compat/compat_snprintf.c
     core/emu/vbgo_tiletrack.c
