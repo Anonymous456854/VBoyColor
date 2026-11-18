@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -28,8 +29,31 @@
 #include <unistd.h>
 #endif
 
+// Exposed by the generated Beetle VB mednafen/settings.c in this
+// experimental build. Changes only VIP display shortcuts, not gamepad input.
+extern "C" void vbgo_set_warzone_safe_video(bool enabled);
+
 namespace
 {
+    bool IsVirtualWarzone(const std::string &path, const std::string &title)
+    {
+        auto matches = [](const std::string &raw)
+        {
+            std::string normalized;
+            for (unsigned char c : raw)
+                if (std::isalnum(c))
+                    normalized += static_cast<char>(std::tolower(c));
+            // Cover Virtual WarZone filenames with version suffixes. Never
+            // select the separate Ground Zero title or unrelated games.
+            if (normalized.find("groundzero") != std::string::npos)
+                return false;
+            return normalized.rfind("virtualwarzone", 0) == 0 ||
+                   normalized.rfind("warzone", 0) == 0;
+        };
+        const size_t slash = path.find_last_of("/\\#");
+        const std::string filename = path.substr(slash == std::string::npos ? 0 : slash + 1);
+        return matches(filename) || matches(title);
+    }
     // screen_filter.frag's modes past the looks (see LedPrepared there).
     constexpr int kFilterLedPrepared = 3, kFilterLedLit = 4, kFilterLedGlow = 5;
 
@@ -373,6 +397,14 @@ bool Emulator::LoadRom(const std::string &romPath, const std::string &displayNam
     StopMovie();
     m_movieSession = movie != nullptr;
     g_movieCore = m_movieSession;
+
+    // Use the core's normal timing/drawing hacks for every other ROM.
+    // Set this BEFORE retro_load_game, which calls Mednafen's VIP_Init.
+    const bool warzoneSafeVideo = IsVirtualWarzone(romPath, displayName);
+    vbgo_set_warzone_safe_video(warzoneSafeVideo);
+    if (warzoneSafeVideo)
+        LogLine("[Emulator] Virtual WarZone experiment: instant display and draw skipping disabled");
+
     if (movie)
     {
         m_movie = *movie;
